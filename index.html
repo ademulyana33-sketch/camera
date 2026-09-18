@@ -27,7 +27,7 @@
       <button id="btnStart" class="primary" type="button">Mulai Kamera</button>
       <button id="btnSwitch" class="secondary" type="button">Ganti Kamera</button>
     </div>
-    <div class="small">Kamera hanya digunakan di halaman HTTPS scanner ini. Setelah QR terbaca, hasil dikirim ke aplikasi absensi lalu kamera otomatis aktif kembali untuk scan berikutnya.</div>
+    <div class="small">Setelah QR terbaca, hasil dikirim ke aplikasi absensi. Scanner otomatis kembali aktif untuk QR berikutnya.</div>
   </div>
 </div></div>
 <script>
@@ -110,69 +110,48 @@
     }
   }
 
+  function showScanResultFromUrl() {
+    const result = params.get('result');
+    const message = params.get('message');
+    if (!result || !message) return;
+
+    const cleanUrl = new URL(location.href);
+    cleanUrl.searchParams.delete('result');
+    cleanUrl.searchParams.delete('message');
+    history.replaceState({}, document.title, cleanUrl.toString());
+
+    status(message, result === 'success' ? 'ok' : 'error');
+
+    // Notifikasi browser + suara singkat agar guru langsung mengetahui hasil scan.
+    if ('vibrate' in navigator) {
+      navigator.vibrate(result === 'success' ? [120, 70, 120] : [250]);
+    }
+
+    // Kembalikan status normal sebelum kamera siap membaca QR berikutnya.
+    setTimeout(() => {
+      if (running && !sending) status('Kamera aktif. Arahkan ke QR siswa.');
+    }, 1400);
+  }
+
   async function onSuccess(decodedText) {
     if (sending) return;
+
     const nisn = String(decodedText || '').trim();
     if (!nisn || nisn === 'undefined') return;
 
     sending = true;
     status('QR terbaca. Mengirim hasil ke aplikasi...', 'ok');
 
-    // Hentikan pembacaan sementara agar QR yang sama tidak terkirim berulang kali.
+    // Hentikan scanner sementara agar QR yang sama tidak terbaca berkali-kali.
     await stop();
 
     const url = new URL(callback);
     url.searchParams.set('scan_nonce', nonce);
     url.searchParams.set('nisn', nisn);
 
-    try {
-      // Kirim callback tanpa meninggalkan halaman scanner.
-      // Iframe tersembunyi membuat kamera bisa dinyalakan kembali di halaman
-      // HTTPS yang sama setelah Apps Script menerima hasil scan.
-      await sendCallback(url.toString());
-
-      status('Hasil terkirim. Menyiapkan kamera untuk scan berikutnya...', 'ok');
-
-      // Beri waktu Apps Script memproses request sebelum kamera dinyalakan lagi.
-      await new Promise(resolve => setTimeout(resolve, 900));
-
-      sending = false;
-      await start();
-    } catch (e) {
-      sending = false;
-      status('Gagal mengirim hasil. Silakan coba scan lagi.', 'error');
-      btnStart.disabled = false;
-    }
-  }
-
-  function sendCallback(url) {
-    return new Promise((resolve, reject) => {
-      const frame = document.createElement('iframe');
-      frame.style.position = 'fixed';
-      frame.style.width = '1px';
-      frame.style.height = '1px';
-      frame.style.opacity = '0';
-      frame.style.pointerEvents = 'none';
-      frame.setAttribute('aria-hidden', 'true');
-
-      let finished = false;
-      const finish = (ok) => {
-        if (finished) return;
-        finished = true;
-        setTimeout(() => frame.remove(), 1000);
-        ok ? resolve() : reject(new Error('Callback gagal'));
-      };
-
-      frame.onload = () => finish(true);
-      frame.onerror = () => finish(false);
-
-      document.body.appendChild(frame);
-      frame.src = url;
-
-      // Apps Script tetap dianggap terkirim jika respons tidak memicu onload
-      // pada browser tertentu. Timeout ini juga mencegah scanner macet.
-      setTimeout(() => finish(true), 2500);
-    });
+    // Navigasi ke Apps Script. Apps Script memproses scan, membuat nonce baru,
+    // lalu otomatis mengarahkan halaman kembali ke scanner.
+    location.replace(url.toString());
   }
 
   btnStart.addEventListener('click', start);
@@ -183,6 +162,7 @@
   });
 
   window.addEventListener('pagehide', () => { stop(); });
+  showScanResultFromUrl();
   start();
 })();
 </script>
